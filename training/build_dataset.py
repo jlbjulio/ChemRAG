@@ -149,6 +149,53 @@ def _public_method(method: str | None) -> str:
     return ""
 
 
+def _spanish_property_label(name: str) -> str:
+    labels = {
+        "molecular_weight": "peso molecular",
+        "polar_surface_area": "área de superficie polar",
+        "hydrogen_bond_acceptor_count": "aceptores de enlaces de hidrógeno",
+        "hydrogen_bond_donor_count": "donantes de enlaces de hidrógeno",
+        "rotatable_bond_count": "enlaces rotables",
+        "energy_per_atom": "energía por átomo",
+        "band_gap": "brecha de banda",
+        "formation_energy_per_atom": "energía de formación por átomo",
+        "distance_from_convex_hull": "distancia al casco convexo",
+        "lattice_parameter_a": "parámetro de red a",
+        "lattice_parameter_b": "parámetro de red b",
+        "lattice_parameter_c": "parámetro de red c",
+        "lattice_angle_alpha": "ángulo de red alfa",
+        "lattice_angle_beta": "ángulo de red beta",
+        "lattice_angle_gamma": "ángulo de red gamma",
+        "unit_cell_volume": "volumen de la celda unitaria",
+        "volume_per_atom": "volumen por átomo",
+        "magnetization_per_atom": "magnetización por átomo",
+        "atomic_volume_per_atom": "volumen atómico por átomo",
+        "volume_deviation": "desviación de volumen",
+    }
+    return labels.get(name, name.replace("_", " "))
+
+
+def _spanish_public_method(method: str | None) -> str:
+    if not method:
+        return ""
+
+    normalized = method.casefold()
+
+    if "pbe" in normalized:
+        return " mediante un cálculo PBE"
+
+    if "dft" in normalized:
+        return " mediante un cálculo DFT"
+
+    if "crystal structure record" in normalized:
+        return " según datos cristalográficos reportados"
+
+    if "calculated" in normalized or "descriptor" in normalized:
+        return " como valor calculado"
+
+    return ""
+
+
 def _join_labels(labels: list[str]) -> str:
     if len(labels) == 1:
         return labels[0]
@@ -391,7 +438,10 @@ def examples_from_record(record: ChemicalRecord) -> list[dict]:
                 _compact_context(record, context_facts),
                 f"Report only the {_join_labels([item[0] for item in requested])} "
                 f"for {record.preferred_name}.",
-                " ".join(item[2] for item in requested),
+                "\n".join(
+                    f"- {item[0].capitalize()}: {item[2]}"
+                    for item in requested
+                ),
             )
         )
 
@@ -406,8 +456,9 @@ def examples_from_record(record: ChemicalRecord) -> list[dict]:
                 _compact_context(record, context_facts),
                 f"Report the {available[0]} and {unavailable_label} for "
                 f"{record.preferred_name}.",
-                f"{available[2]} The {unavailable_label} is not available "
-                "in the retrieved evidence.",
+                f"- {available[0].capitalize()}: {available[2]}\n"
+                f"- {unavailable_label.capitalize()}: Not available in "
+                "the retrieved evidence.",
             )
         )
 
@@ -418,7 +469,70 @@ def examples_from_record(record: ChemicalRecord) -> list[dict]:
             NO_ANSWER,
         )
     )
-    return examples
+    spanish_examples = []
+
+    if record.formula:
+        spanish_examples.append(
+            _example(
+                base_context,
+                f"¿Qué fórmula química se reporta para "
+                f"{record.preferred_name}?",
+                f"La fórmula reportada es {record.formula}.",
+            )
+        )
+
+    for item in record.properties:
+        if item.name not in PROPERTY_QUESTIONS:
+            continue
+
+        label = _spanish_property_label(item.name)
+        value = _format_property(item)
+        spanish_examples.append(
+            _example(
+                _compact_context(
+                    record,
+                    [
+                        f"Reported {item.name}: {value}"
+                        + (
+                            f" (method: {item.method})"
+                            if item.method
+                            else ""
+                        )
+                    ],
+                ),
+                f"¿Cuál es el valor reportado de {label} para "
+                f"{record.preferred_name}?",
+                f"El valor reportado de {label} es {value}"
+                f"{_spanish_public_method(item.method)}.",
+            )
+        )
+
+    if space_group:
+        spanish_examples.append(
+            _example(
+                _compact_context(record, [f"Space group: {space_group}"]),
+                f"¿Cuál es el grupo espacial reportado para "
+                f"{record.preferred_name}?",
+                f"El grupo espacial reportado es {space_group}.",
+            )
+        )
+
+    spanish_missing_question = (
+        f"¿Qué dosis clínica se recomienda para {record.preferred_name}?"
+        if record.domain == "organic"
+        else (
+            f"¿Qué temperatura de síntesis se usó para "
+            f"{record.preferred_name}?"
+        )
+    )
+    spanish_examples.append(
+        _example(
+            _compact_context(record, available_facts[:4]),
+            spanish_missing_question,
+            NO_ANSWER,
+        )
+    )
+    return [*examples, *spanish_examples]
 
 
 def collect_records(

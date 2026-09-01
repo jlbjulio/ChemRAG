@@ -16,7 +16,6 @@ ADAPTER_DIR = (
     PROJECT_ROOT / "models" / "qwen3-0.6b-chemistry-lora"
 )
 MODEL_ID = "Qwen/Qwen3-0.6B"
-LORA_INFERENCE_SCALE = 0.1
 
 NO_ANSWER = "I could not find that information in the retrieved sources."
 SYSTEM_PROMPT = (
@@ -27,7 +26,9 @@ SYSTEM_PROMPT = (
     "receive a complete, well-organized explanation. Include every requested "
     "item and exclude facts that were not requested. Reconcile differing "
     "records when possible and clearly distinguish calculated properties from "
-    "reported crystal data. For crystal structure, report a named prototype, "
+    "reported crystal data. When multiple properties are requested, write one "
+    "bullet per requested property, preserve the user's labels, and do not add "
+    "unrequested properties. For crystal structure, report a named prototype, "
     "phase, or symmetry description when available; do not substitute lattice "
     "parameters or unit-cell volume unless the user asks for them. If only "
     "some requested items are available, answer those and explicitly identify "
@@ -39,65 +40,29 @@ SYSTEM_PROMPT = (
     "exactly: "
     f"{NO_ANSWER}"
 )
-EDITOR_PROMPT = (
-    "You are the final editor of a scientific answer. Return only the final "
-    "answer in the same language as the question. Check the draft against the "
-    "retrieved evidence. Include every item the user requested and remove every "
-    "fact the user did not request. Never mention databases, providers, source "
-    "names, record IDs, licenses, or retrieval operations. Do not claim that an "
-    "unrequested property is missing. If a requested item is absent, identify "
-    "that item as unavailable. Preserve units and distinguish calculated values "
-    "from reported crystal or experimental data whenever the question requests "
-    "that distinction. In that case, explicitly label DFT/PBE-derived values as "
-    "calculated and label crystallographic records as reported crystal data; do "
-    "not call them experimental unless the evidence says so. Follow the evidence "
-    "type labels in the context. A provider name is "
-    "not a scientific method. For crystal "
-    "structure, prefer an explicit prototype or phase; do not repeat the space "
-    "group as the structure when both were requested and a prototype is present. "
-    "When the question requests multiple listed items, write exactly one bullet "
-    "per requested item, copy its label from the question, and do not add other "
-    "bullets. Do not invent facts."
-)
-
-
 class LocalLLM:
     def __init__(self) -> None:
+        if not ADAPTER_DIR.is_dir():
+            raise FileNotFoundError(
+                "The chemistry LoRA adapter was not found at "
+                f"{ADAPTER_DIR}. Run training/train_lora.py first."
+            )
+
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         dtype = torch.float16 if self.device == "cuda" else torch.float32
-        self.has_adapter = ADAPTER_DIR.exists()
-        tokenizer_source = ADAPTER_DIR if self.has_adapter else MODEL_ID
 
-        self.tokenizer: Any = AutoTokenizer.from_pretrained(tokenizer_source)
+        self.tokenizer: Any = AutoTokenizer.from_pretrained(ADAPTER_DIR)
         base_model: Any = AutoModelForCausalLM.from_pretrained(
             MODEL_ID,
             dtype=dtype,
         )
-        self.model: Any
-
-        if self.has_adapter:
-            self.model = PeftModel.from_pretrained(
-                base_model,
-                ADAPTER_DIR,
-            )
-            self._scale_adapter(LORA_INFERENCE_SCALE)
-        else:
-            self.model = base_model
+        self.model: Any = PeftModel.from_pretrained(
+            base_model,
+            ADAPTER_DIR,
+        )
 
         self.model.to(self.device)
         self.model.eval()
-
-    def _scale_adapter(self, factor: float) -> None:
-        """Blend LoRA behavior conservatively with Qwen instruction-following."""
-        for module in self.model.modules():
-            scaling = getattr(module, "scaling", None)
-
-            if not isinstance(scaling, dict):
-                continue
-
-            for adapter_name, current_scale in list(scaling.items()):
-                if isinstance(current_scale, (int, float)):
-                    scaling[adapter_name] = current_scale * factor
 
     @torch.inference_mode()
     def _generate_messages(self, messages: list[dict[str, str]]) -> str:
@@ -131,22 +96,21 @@ class LocalLLM:
                 "role": "user",
                 "content": (
                     f"Retrieved context:\n{context}\n\n"
-                    f"Question:\n{question}"
-                ),
-            },
-        ]
-        return self._generate_messages(messages)
-
-    def refine(self, question: str, context: str, draft: str) -> str:
-        messages = [
-            {"role": "system", "content": EDITOR_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    f"Draft answer:\n{draft}\n\n"
-                    f"Retrieved evidence:\n{context}\n\n"
                     f"Question:\n{question}\n\n"
-                    "Rewrite the final answer using only the evidence."
+                    "Final-answer contract:\n"
+                    "- Answer only what the question explicitly requests.\n"
+                    "- Never include an unrequested property, even when it "
+                    "appears in the context.\n"
+                    "- For a multi-property question, use exactly one bullet "
+                    "for each requested property and no other bullets.\n"
+                    "- Mark a requested property as unavailable when the "
+                    "context does not contain it.\n"
+                    "- If the question asks to distinguish evidence types, "
+                    "label each value as calculated, reported crystal data, "
+                    "or experimental only when the context supports that "
+                    "label.\n"
+                    "- Return only the answer, without sources or retrieval "
+                    "commentary."
                 ),
             },
         ]
@@ -182,7 +146,3 @@ def generate_answer(question: str, context: str) -> str:
 
 def generate_base_answer(question: str, context: str) -> str:
     return get_local_llm().generate_without_adapter(question, context)
-
-
-def refine_answer(question: str, context: str, draft: str) -> str:
-    return get_local_llm().refine(question, context, draft)

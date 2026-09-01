@@ -1,4 +1,3 @@
-import math
 import sys
 from pathlib import Path
 
@@ -33,7 +32,6 @@ def run_scenario(answer_chunk: int) -> bool:
     original_retrieve_chunks = search_chunks.retrieve_chunks_with_notices
     original_rerank_results = search_chunks.rerank_results
     original_generate_answer = search_chunks.generate_answer
-    original_refine_answer = search_chunks.refine_answer
     original_debug = search_chunks.DEBUG
 
     def fake_retrieve_chunks(
@@ -66,20 +64,11 @@ def run_scenario(answer_chunk: int) -> bool:
 
         return search_chunks.NO_ANSWER
 
-    def fake_refine_answer(
-        question: str,
-        context: str,
-        draft: str,
-    ) -> str:
-        return draft
-
-
     try:
         search_chunks.DEBUG = False
         search_chunks.retrieve_chunks_with_notices = fake_retrieve_chunks
         search_chunks.rerank_results = fake_rerank_results
         search_chunks.generate_answer = fake_generate_answer
-        search_chunks.refine_answer = fake_refine_answer
 
         answer, sources = search_chunks.answer_question(
             "What is the secret code?"
@@ -88,22 +77,19 @@ def run_scenario(answer_chunk: int) -> bool:
         search_chunks.retrieve_chunks_with_notices = original_retrieve_chunks
         search_chunks.rerank_results = original_rerank_results
         search_chunks.generate_answer = original_generate_answer
-        search_chunks.refine_answer = original_refine_answer
         search_chunks.DEBUG = original_debug
 
-    expected_batches = math.ceil(
-        answer_chunk / search_chunks.CHUNKS_PER_BATCH
-    )
-
     success = (
-        len(reviewed_contexts) == expected_batches
+        len(reviewed_contexts) == 1
+        and "CHUNK 1" in reviewed_contexts[0]
+        and "CHUNK 18" in reviewed_contexts[0]
         and "ORION" in answer
         and f"document_{answer_chunk}.txt" in sources
     )
 
     print(
         f"Chunk {answer_chunk}: "
-        f"{len(reviewed_contexts)} batch(es) reviewed"
+        f"{len(reviewed_contexts)} complete context(s) reviewed"
     )
 
     return success
@@ -120,7 +106,7 @@ def main() -> None:
         )
 
     print(
-        "PASS: Qwen stops early and can still reach a late answer."
+        "PASS: every reranked chunk reaches one Qwen generation."
     )
 
 

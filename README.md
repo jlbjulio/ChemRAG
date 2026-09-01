@@ -63,9 +63,9 @@ Question
       -> SLICES converter + material search SLICES
       -> FAISS                              local documents
    -> cross-encoder reranker
-   -> Qwen3-0.6B + chemistry LoRA draft
-   -> Qwen3-0.6B + chemistry LoRA evidence review
-   -> deterministic scope check
+   -> complete reranked evidence context
+   -> Qwen3-0.6B + chemistry LoRA
+   -> evidence-backed scope validation for structured property lists
    -> final answer
 ```
 
@@ -75,18 +75,21 @@ only when no web source returns a record. A failure from one provider is not
 shown to the user when another provider can answer.
 
 Online scientific records are normalized into one internal schema and labeled as
-calculated values, reported values, or reported crystal data. The reranker then
-selects the most relevant representative from each provider. Local document
-results use progressive batches, so a relevant late chunk remains reachable
-without sending every document to Qwen at once.
+calculated values, reported values, or reported crystal data. After reranking,
+every relevant record is included in the generation context. The same rule
+applies to local documents, so a lower-ranked result is not silently discarded
+when it contains a requested property.
 
 FAISS does not permanently sort the chunks. It stores vectors and ranks them for
 each new question according to vector similarity. A cross-encoder performs a
 second, more precise ranking before generation.
 
-Both language-model passes use the loaded LoRA adapter. The final scope check is
-plain Python: it can remove unrequested fields from an enumerated answer, but it
-does not generate text or replace the fine-tuned model.
+The answer is produced in one model pass. The LoRA adapter is required and stays
+active at its trained scale; the chatbot does not silently fall back to the base
+Qwen model. For multi-property lists, a small deterministic validator reads the
+normalized context, keeps exactly the requested fields, preserves evidence-type
+labels, and marks missing fields as unavailable. Open-ended explanations remain
+model-generated.
 
 ## Scientific sources and local tools
 
@@ -154,16 +157,17 @@ Generated indexes are written to `data/processed` and are not committed.
 
 ## Fine-tuning
 
-The base model is `Qwen/Qwen3-0.6B`. Its LoRA adapter was trained on 10,000
-balanced organic and inorganic instruction examples generated from scientific
-records. Fine-tuning teaches behavior rather than current facts: selecting the
-requested fields, preserving units and method types, handling partial evidence,
-and refusing unsupported claims. RAG supplies the current scientific data.
+The base model is `Qwen/Qwen3-0.6B`. The dataset builder creates 10,000 balanced
+organic and inorganic instruction examples by default, then makes a 90/10
+entity-separated training and validation split. Fine-tuning teaches behavior
+rather than current facts: selecting requested fields, preserving units and
+method types, handling partial evidence, and refusing unsupported claims. RAG
+supplies the current scientific data.
 
 The adapter uses rank 8, alpha 16, and targets the attention `q_proj` and
-`v_proj` modules. During chatbot inference it remains active in both generation
-passes with a conservative blend factor of `0.1`, which preserves Qwen's
-instruction-following while retaining the learned chemistry behavior.
+`v_proj` modules. Training is configured for one complete pass over the training
+split, with validation and checkpoint selection at the end of the epoch. The
+saved adapter is loaded at its normal LoRA scale during chatbot inference.
 
 ## Evaluation
 
@@ -176,7 +180,7 @@ py evals/evaluate_finetuning.py
 ```
 
 The first three evaluations validate routing, fallbacks, chemistry tools,
-retrieval, late-chunk batching, and grounded end-to-end answers.
+retrieval, complete evidence assembly, and grounded end-to-end answers.
 
 `evaluate_finetuning.py` is an optional offline benchmark. It temporarily
 disables LoRA only to compare the original Qwen baseline against Qwen + LoRA.
@@ -188,7 +192,7 @@ than merely assuming that it does.
 
 ```text
 src/chat.py                 Terminal chatbot
-src/search_chunks.py        Retrieval, reranking, generation, and scope control
+src/search_chunks.py        Retrieval, context assembly, generation, and validation
 src/chemistry/              Scientific APIs, schema, RDKit, and SLICES tools
 src/local_llm.py            Qwen and LoRA loading/inference
 src/create_embeddings.py    Local document indexing

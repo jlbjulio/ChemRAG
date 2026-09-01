@@ -12,11 +12,7 @@ from chemistry.online import retrieve_online
 from chemistry.schema import render_record_as_text
 from load_document import PROJECT_ROOT
 from local_embeddings import EMBEDDING_DIMENSION, create_query_embedding
-from local_llm import (
-    NO_ANSWER,
-    generate_answer,
-    refine_answer,
-)
+from local_llm import NO_ANSWER, generate_answer
 from local_reranker import RerankedResult, RetrievedResult, rerank_results
 
 
@@ -25,7 +21,6 @@ FAISS_INDEX_PATH = PROCESSED_DIR / "index.faiss"
 METADATA_PATH = PROCESSED_DIR / "metadata.json"
 
 MIN_SIMILARITY = 0.85
-CHUNKS_PER_BATCH = 5
 DEBUG = False
 
 _vector_store_loaded = False
@@ -128,50 +123,11 @@ def retrieve_chunks(question: str) -> list[RetrievedResult]:
     return results
 
 
-def split_into_batches(
-    results: list[RerankedResult],
-    batch_size: int = CHUNKS_PER_BATCH,
-) -> list[list[RerankedResult]]:
-    if batch_size <= 0:
-        raise ValueError("The batch size must be greater than zero.")
-
-    return [
-        results[start:start + batch_size]
-        for start in range(0, len(results), batch_size)
-    ]
-
-
 def build_context(results: list[RerankedResult]) -> str:
     return "\n\n".join(
         f"Evidence [S{index}]\nSource: {item['source']}\n{item['text']}"
         for index, (_, _, item) in enumerate(results, start=1)
     )
-
-
-def split_into_source_batches(
-    results: list[RerankedResult],
-    batch_size: int = CHUNKS_PER_BATCH,
-) -> list[list[RerankedResult]]:
-    if batch_size <= 0:
-        raise ValueError("The batch size must be greater than zero.")
-
-    representatives = []
-    remaining = []
-    seen_providers = set()
-
-    for result in results:
-        _, _, item = result
-        provider = item.get("provider", item["source"])
-
-        if provider not in seen_providers and len(representatives) < batch_size:
-            representatives.append(result)
-            seen_providers.add(provider)
-        else:
-            remaining.append(result)
-
-    batches = [representatives] if representatives else []
-    return [*batches, *split_into_batches(remaining, batch_size)]
-
 
 def normalize_text(text: str) -> str:
     normalized = unicodedata.normalize("NFKD", text)
@@ -187,142 +143,183 @@ def is_no_answer(answer: str) -> bool:
     return normalize_text(answer) == normalize_text(NO_ANSWER)
 
 
-def _requested_list(question: str) -> list[str]:
-    match = re.search(
-        r"\b(?:report|provide|list|give|reporta|informa|dame|lista)\b"
-        r"\s+(.+?)(?:[.?!]|$)",
-        question,
-        re.IGNORECASE,
+def _requested_properties(question: str) -> list[str]:
+    patterns = (
+        r"\b(?:report|provide|list|give|show|tell me|reporta|informa|dame|"
+        r"lista|muestra)\b\s+(.+?)(?:[.?!]|$)",
+        r"\b(?:what (?:is|are)|which (?:is|are)|cu[aá]l(?:es)? "
+        r"(?:es|son))\b\s+(.+?)(?:[.?!]|$)",
+    )
+    match = next(
+        (
+            candidate
+            for pattern in patterns
+            if (
+                candidate := re.search(
+                    pattern,
+                    question,
+                    re.IGNORECASE,
+                )
+            )
+        ),
+        None,
     )
 
     if not match:
         return []
 
-    segment = re.sub(
-        r"^(?:only\s+)?(?:the\s+)?(?:available\s+)?",
-        "",
-        match.group(1).strip(),
+    segment = re.split(
+        r",\s*(?:and\s+|y\s+)?(?:distinguish|differentiate|distingue)",
+        match.group(1),
+        maxsplit=1,
         flags=re.IGNORECASE,
-    )
-    segment = re.sub(
-        r"\s+for\s+[A-Za-z0-9₀-₉]+$",
-        "",
-        segment,
-        flags=re.IGNORECASE,
-    )
+    )[0]
     parts = re.split(r"\s*,\s*|\s+and\s+|\s+y\s+", segment)
-    cleaned = [
-        re.sub(
-            r"^(?:(?:and|y)\s+)?(?:(?:the|la|el|los|las)\s+)?",
+    cleaned = []
+
+    for part in parts:
+        label = re.sub(
+            r"^(?:(?:and|y)\s+)?(?:only\s+)?(?:the\s+)?"
+            r"(?:(?:solo|solamente)\s+)?(?:(?:el|la|los|las)\s+)?"
+            r"(?:(?:available|disponible)\s+)?",
             "",
             part.strip(),
-            flags=re.I,
+            flags=re.IGNORECASE,
         )
-        for part in parts
-        if part.strip()
-    ]
+        label = re.sub(
+            r"\s+(?:of|for|de|del|para)\s+(?:(?:the|el|la)\s+)?"
+            r"[A-Za-zÀ-ÿ0-9₀-₉().+-]+$",
+            "",
+            label,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        if label:
+            cleaned.append(label)
+
     return cleaned if len(cleaned) >= 2 else []
 
 
-def _evidence_type(label: str, value: str, context: str) -> str | None:
-    normalized_label = normalize_text(label)
-    normalized_value = normalize_text(
-        re.sub(r"\([^)]*\)$", "", value).strip()
+def _property_key(label: str) -> str:
+    normalized = normalize_text(label)
+
+    if "thermodynamic stability" in normalized or "convex hull" in normalized:
+        return "thermodynamic_stability"
+
+    if "estabilidad termodinamica" in normalized or "casco convexo" in normalized:
+        return "thermodynamic_stability"
+
+    if "formation energy" in normalized or "energia de formacion" in normalized:
+        return "formation_energy"
+
+    if "band gap" in normalized or "brecha de banda" in normalized:
+        return "band_gap"
+
+    if "space group" in normalized or "grupo espacial" in normalized:
+        return "space_group"
+
+    if any(
+        term in normalized
+        for term in (
+            "crystal structure",
+            "crystal prototype",
+            "prototype",
+            "estructura cristalina",
+            "prototipo",
+        )
+    ):
+        return "crystal_structure"
+
+    return re.sub(
+        r"\b(?:reported|available|calculated|experimental|reportado|"
+        r"disponible|calculado|experimental)\b",
+        "",
+        normalized,
+    ).strip()
+
+
+def _context_properties(context: str) -> dict[str, list[tuple[str, str | None]]]:
+    properties: dict[str, list[tuple[str, str | None]]] = {}
+    labeled_evidence_pattern = re.compile(
+        r"^\s*[-*]?\s*(.+?)\s+\(evidence type:\s*([^)]+)\)"
+        r":\s*(.+?)\s*$",
+        re.IGNORECASE,
+    )
+    line_pattern = re.compile(r"^\s*[-*]?\s*([^:]+):\s*(.+?)\s*$")
+    value_evidence_pattern = re.compile(
+        r"\s*\(evidence type:\s*([^;)]+)(?:;[^)]*)?\)\s*$",
+        re.IGNORECASE,
     )
 
     for line in context.splitlines():
-        normalized_line = normalize_text(line)
+        evidence_match = labeled_evidence_pattern.match(line)
 
-        if (
-            normalized_label not in normalized_line
-            and normalized_value not in normalized_line
-        ):
-            continue
+        if evidence_match:
+            label, label_evidence, value = evidence_match.groups()
+        else:
+            match = line_pattern.match(line)
 
-        match = re.search(
-            r"evidence type:\s*([^;)]+)",
-            line,
-            re.IGNORECASE,
-        )
+            if not match:
+                continue
 
-        if match:
-            return match.group(1).strip()
+            label, value = match.groups()
+            label_evidence = None
 
-    return None
+        key = _property_key(label)
+        value_evidence = value_evidence_pattern.search(value)
+        evidence_type = label_evidence
+
+        if value_evidence:
+            evidence_type = value_evidence.group(1).strip()
+            value = value_evidence_pattern.sub("", value).strip()
+
+        entry = (value, evidence_type.strip() if evidence_type else None)
+        properties.setdefault(key, [])
+
+        if entry not in properties[key]:
+            properties[key].append(entry)
+
+    return properties
 
 
-def enforce_requested_scope(
+def enforce_structured_scope(
     question: str,
     context: str,
     answer: str,
 ) -> str:
-    requested_items = _requested_list(question)
+    requested = _requested_properties(question)
 
-    if not requested_items:
+    if not requested:
         return answer
 
-    candidate_items = []
-
-    for line in answer.splitlines():
-        match = re.match(r"\s*[-*]?\s*([^:]+):\s*(.+?)\s*$", line)
-
-        if match:
-            candidate_items.append((match.group(1).strip(), match.group(2).strip()))
-
-    if not candidate_items:
-        return answer
-
-    distinction_requested = bool(
+    properties = _context_properties(context)
+    distinguish = bool(
         re.search(
             r"distinguish|differentiate|calculated|experimental|disting",
             question,
             re.IGNORECASE,
         )
     )
-    missing_text = (
-        "No disponible."
-        if re.search(r"\b(?:de|del|para|y|informa|dame)\b", question, re.I)
-        else "Not available."
-    )
-    scoped_lines = []
+    spanish = bool(re.search(r"[¿¡áéíóúñ]", question, re.IGNORECASE))
+    missing = "No disponible" if spanish else "Not available"
+    lines = []
+    found_property = False
 
-    for requested in requested_items:
-        normalized_requested = normalize_text(requested)
-        selected = next(
-            (
-                (label, value)
-                for label, value in candidate_items
-                if normalize_text(label) in normalized_requested
-                or normalized_requested in normalize_text(label)
-            ),
-            None,
-        )
+    for label in requested:
+        entries = properties.get(_property_key(label), [])
 
-        if selected is None:
-            value = missing_text
+        if not entries:
+            value = missing
         else:
-            _, value = selected
+            found_property = True
+            value, evidence_type = entries[0]
 
-            if re.search(
-                r"not provided|not available|no disponible",
-                value,
-                re.IGNORECASE,
-            ):
-                value = missing_text
+            if distinguish and evidence_type:
+                value = f"{value} ({evidence_type})"
 
-            if distinction_requested and not re.search(
-                r"not provided|not available|no disponible",
-                value,
-                re.IGNORECASE,
-            ):
-                evidence_type = _evidence_type(requested, value, context)
+        lines.append(f"- {label.strip().capitalize()}: {value}")
 
-                if evidence_type and evidence_type.casefold() not in value.casefold():
-                    value = f"{value} ({evidence_type})"
-
-        scoped_lines.append(f"- {requested.strip().capitalize()}: {value}")
-
-    return "\n".join(scoped_lines)
+    return "\n".join(lines) if found_property else NO_ANSWER
 
 
 def answer_question_with_details(question: str) -> AnswerDetails:
@@ -352,60 +349,24 @@ def answer_question_with_details(question: str) -> AnswerDetails:
                 f"retrieval={retrieval_score:.4f}: {title}"
             )
 
-    batches = split_into_source_batches(reranked_results)
+    context = build_context(reranked_results)
+    generation_started = perf_counter()
+    answer = generate_answer(question, context)
+    answer = enforce_structured_scope(question, context, answer)
+    generation_time = perf_counter() - generation_started
 
-    if all("provider" in item for _, _, item in reranked_results):
-        context = build_context(batches[0])
-        draft = generate_answer(question, context)
-        answer = refine_answer(question, context, draft)
-        answer = enforce_requested_scope(question, context, answer)
+    if DEBUG:
+        print(f"\nQwen generation time: {generation_time:.3f} s")
 
-        if is_no_answer(answer):
-            return AnswerDetails(NO_ANSWER, [], notices)
+    if is_no_answer(answer):
+        return AnswerDetails(NO_ANSWER, [], notices)
 
-        sources = list(
-            dict.fromkeys(
-                item["source"] for _, _, item in batches[0]
-            )
+    sources = list(
+        dict.fromkeys(
+            item["source"] for _, _, item in reranked_results
         )
-        return AnswerDetails(answer, sources, notices)
-
-    for batch_number, batch in enumerate(batches, start=1):
-        if DEBUG:
-            print(
-                f"\nReviewing batch {batch_number}/{len(batches)} "
-                f"({len(batch)} chunks)..."
-            )
-
-        context = build_context(batch)
-        generation_started = perf_counter()
-        partial_answer = generate_answer(question, context)
-        generation_time = perf_counter() - generation_started
-
-        if DEBUG:
-            print(f"Qwen generation time: {generation_time:.3f} s")
-
-        if is_no_answer(partial_answer):
-            continue
-
-        partial_answer = refine_answer(
-            question,
-            context,
-            partial_answer,
-        )
-        partial_answer = enforce_requested_scope(
-            question,
-            context,
-            partial_answer,
-        )
-
-        sources = list(
-            dict.fromkeys(item["source"] for _, _, item in batch)
-        )
-
-        return AnswerDetails(partial_answer, sources, notices)
-
-    return AnswerDetails(NO_ANSWER, [], notices)
+    )
+    return AnswerDetails(answer, sources, notices)
 
 
 def answer_question(question: str) -> tuple[str, list[str]]:

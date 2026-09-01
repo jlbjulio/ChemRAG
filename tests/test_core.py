@@ -19,11 +19,13 @@ from chemistry.oqmd_local import (  # noqa: E402
 )
 from chemistry.smiles_tools import analyze_smiles  # noqa: E402
 from chemistry.schema import render_record_as_text  # noqa: E402
+from local_llm import LocalLLM  # noqa: E402
 from search_chunks import (  # noqa: E402
-    enforce_requested_scope,
-    split_into_batches,
-    split_into_source_batches,
+    NO_ANSWER,
+    build_context,
+    enforce_structured_scope,
 )
+from training.build_dataset import examples_from_record  # noqa: E402
 
 
 class QueryRoutingTests(unittest.TestCase):
@@ -146,46 +148,70 @@ class OnlineFallbackTests(unittest.TestCase):
         local_mock.assert_not_called()
 
 
-class BatchingTests(unittest.TestCase):
-    def test_multi_item_scope_removes_unrequested_fields(self) -> None:
+class ContextAssemblyTests(unittest.TestCase):
+    def test_context_contains_every_reranked_result(self) -> None:
+        results = [
+            (
+                1.0,
+                1.0,
+                {
+                    "source": f"document_{index}.txt",
+                    "text": f"CHUNK {index}",
+                },
+            )
+            for index in range(1, 19)
+        ]
+        context = build_context(results)
+        self.assertIn("CHUNK 1", context)
+        self.assertIn("CHUNK 18", context)
+        self.assertEqual(context.count("Evidence [S"), 18)
+
+    def test_structured_scope_uses_evidence_and_removes_extra_fields(self) -> None:
         question = (
-            "Report the crystal structure, space group, band gap, and "
-            "thermodynamic stability. Distinguish calculated values."
+            "Report the available crystal structure, space group, band gap, "
+            "formation energy, and thermodynamic stability. Distinguish "
+            "calculated values from experimental data."
         )
         context = (
+            "Prototype (evidence type: reported crystal data): BaTiO3(tet)\n"
             "Space group (evidence type: reported crystal data): P 4 m m\n"
-            "Band gap: 1.9 eV (evidence type: calculated; method: DFT)"
+            "- Band gap: 1.9 eV (evidence type: calculated; method: DFT)\n"
+            "- Formation energy per atom: -3.2 eV/atom "
+            "(evidence type: calculated; method: DFT)\n"
+            "- Unit-cell volume: 64.1 angstrom cubed"
         )
-        candidate = (
-            "- Lattice parameter a: 3.9 Å\n"
-            "- Space group: P 4 m m\n"
-            "- Band gap: 1.9 eV\n"
-            "- Thermodynamic stability: Not provided"
-        )
-        answer = enforce_requested_scope(question, context, candidate)
-        self.assertNotIn("Lattice parameter", answer)
-        self.assertIn("Crystal structure: Not available", answer)
+        candidate = "The structure is tetrahedral. Volume: 64.1."
+        answer = enforce_structured_scope(question, context, candidate)
+        self.assertIn("Crystal structure: BaTiO3(tet) (reported crystal data)", answer)
         self.assertIn("Space group: P 4 m m (reported crystal data)", answer)
         self.assertIn("Band gap: 1.9 eV (calculated)", answer)
+        self.assertIn("Formation energy: -3.2 eV/atom (calculated)", answer)
+        self.assertIn("Thermodynamic stability: Not available", answer)
+        self.assertNotIn("64.1", answer)
 
-    def test_all_results_are_reachable(self) -> None:
-        item = {"source": "test", "text": "test"}
-        results = [(1.0, 1.0, item) for _ in range(18)]
-        batches = split_into_batches(results, batch_size=5)
-        self.assertEqual([len(batch) for batch in batches], [5, 5, 5, 3])
-
-    def test_first_batch_contains_different_sources(self) -> None:
-        results = [
-            (1.0, 1.0, {"source": f"A {index}", "provider": "A", "text": "A"})
-            for index in range(5)
-        ]
-        results.append(
-            (0.5, 1.0, {"source": "B 1", "provider": "B", "text": "B"})
+    def test_structured_scope_refuses_when_every_field_is_missing(self) -> None:
+        answer = enforce_structured_scope(
+            "What are the band gap and formation energy?",
+            "Formula: BaTiO3",
+            "Invented answer",
         )
-        batches = split_into_source_batches(results, batch_size=5)
-        providers = {item["provider"] for _, _, item in batches[0]}
-        self.assertEqual(providers, {"A", "B"})
-        self.assertEqual(sum(len(batch) for batch in batches), len(results))
+        self.assertEqual(answer, NO_ANSWER)
+
+
+class FineTuningSetupTests(unittest.TestCase):
+    def test_dataset_contains_spanish_instructions(self) -> None:
+        record = analyze_smiles("CC(=O)OC1=CC=CC=C1C(=O)O")
+        examples = examples_from_record(record)
+        questions = [
+            item["prompt"][1]["content"]
+            for item in examples
+        ]
+        self.assertTrue(any("¿" in question for question in questions))
+
+    @patch("local_llm.ADAPTER_DIR", Path("missing-test-adapter"))
+    def test_chat_model_requires_the_lora_adapter(self) -> None:
+        with self.assertRaises(FileNotFoundError):
+            LocalLLM()
 
 if __name__ == "__main__":
     unittest.main()
