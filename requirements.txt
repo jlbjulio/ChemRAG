@@ -1,0 +1,12 @@
+pypdf
+torch==2.11.0
+transformers==5.16.1
+sentence-transformers==6.0.1
+datasets==5.0.1
+accelerate==1.14.0
+peft==0.20.0
+trl==1.12.0
+numpy==1.26.4
+faiss-cpu==1.15.0
+gradio_client==1.13.3
+rdkit==2025.9.6

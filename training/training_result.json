@@ -1,0 +1,12 @@
+{
+  "base_model": "Qwen/Qwen3-0.6B",
+  "adapter": "qwen3-0.6b-chemistry-lora",
+  "training_examples": 9000,
+  "validation_examples": 1000,
+  "selected_checkpoint_step": 100,
+  "eval_loss": 0.0008579,
+  "eval_mean_token_accuracy": 1.0,
+  "entity_overlap_between_splits": 0,
+  "training_gpu": "NVIDIA GeForce RTX 3050 Laptop GPU",
+  "training_gpu_vram_gb": 4.0
+}

@@ -1,0 +1,57 @@
+[
+  {
+    "context": "PubChem CID 2244. Aspirin. Molecular weight: 180.16 g/mol.",
+    "question": "What is the molecular weight of aspirin?",
+    "should_refuse": false,
+    "expected_terms": ["180.16", "g/mol"]
+  },
+  {
+    "context": "PubChem CID 2244. Aspirin. Formula: C9H8O4.",
+    "question": "What is its molecular formula?",
+    "should_refuse": false,
+    "expected_terms": ["C9H8O4"]
+  },
+  {
+    "context": "PubChem CID 2244. Aspirin. Molecular weight: 180.16 g/mol.",
+    "question": "What is its melting point?",
+    "should_refuse": true,
+    "expected_terms": []
+  },
+  {
+    "context": "PubChem CID 2519. Caffeine. XLogP: -0.1. TPSA: 58.4 angstrom squared.",
+    "question": "What is the TPSA of caffeine?",
+    "should_refuse": false,
+    "expected_terms": ["58.4"]
+  },
+  {
+    "context": "OQMD entry 13238. BaTiO3. DFT band gap: 2.206 eV.",
+    "question": "What band gap is reported?",
+    "should_refuse": false,
+    "expected_terms": ["2.206", "eV"]
+  },
+  {
+    "context": "OQMD entry 13238. BaTiO3. Formation energy: -3.2867 eV/atom.",
+    "question": "What is the formation energy?",
+    "should_refuse": false,
+    "expected_terms": ["-3.2867", "eV/atom"]
+  },
+  {
+    "context": "COD entry 1507757. BaTiO3. Space group: P m -3 m.",
+    "question": "What is its space group?",
+    "should_refuse": false,
+    "expected_terms": ["P m -3 m"]
+  },
+  {
+    "context": "OQMD entry 13238. BaTiO3. DFT band gap: 2.206 eV.",
+    "question": "What synthesis temperature was used?",
+    "should_refuse": true,
+    "expected_terms": []
+  },
+  {
+    "context": "Chemical entity: BaTiO3. Source: OQMD. Prototype: BaTiO3(tet). Space group: P 4/m m m. Band gap: 1.685 eV (method: OQMD DFT). Formation energy per atom: -3.2801 eV/atom (method: OQMD DFT). Thermodynamic stability (distance from convex hull): 0.009 eV/atom (method: OQMD DFT). Unit-cell volume: 64.1469 angstrom cubed. Number of sites: 5.",
+    "question": "Report only the crystal structure, space group, band gap, formation energy, and thermodynamic stability of BaTiO3.",
+    "should_refuse": false,
+    "expected_terms": ["BaTiO3(tet)", "P 4/m m m", "1.685", "-3.2801", "0.009"],
+    "forbidden_terms": ["64.1469", "number of sites"]
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "question": "What is the molecular weight of aspirin?",
+    "should_refuse": false,
+    "expected_terms": ["180.16", "g/mol"]
+  },
+  {
+    "question": "What is the molecular formula of aspirin?",
+    "should_refuse": false,
+    "expected_terms": ["C9H8O4"]
+  },
+  {
+    "question": "formula: BaTiO3",
+    "should_refuse": false,
+    "expected_terms": ["BaTiO3"]
+  },
+  {
+    "question": "In what year was Isaac Newton born?",
+    "should_refuse": true,
+    "expected_terms": []
+  }
+]

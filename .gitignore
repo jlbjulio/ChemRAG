@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+data/knowledge/*
+!data/knowledge/oqmd_overview.pdf
+data/processed/
+models/
+outputs/
+training/data/
