@@ -105,6 +105,9 @@ No database server or API key is required. An optional `HF_TOKEN` only improves
 Hugging Face download limits. Retrieved records are cached in memory for the
 current session; the cache does not grow permanently on disk.
 
+> **Hardware requirement:** Running the complete project, including LoRA
+> training, requires an NVIDIA GPU with CUDA support.
+
 ## Installation and first run
 
 ChemRAG targets Python 3.11 on Windows and does not require a virtual
