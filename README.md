@@ -4,10 +4,6 @@ ChemRAG is a local, evidence-grounded chemistry assistant for organic molecules
 and inorganic materials. It combines live scientific retrieval, chemistry-aware
 tools, local document search, and a Qwen model fine-tuned with LoRA.
 
-This repository demonstrates a complete applied-AI workflow: source routing,
-parallel retrieval, normalized scientific records, semantic reranking, local LLM
-inference, LoRA fine-tuning, offline fallbacks, and automated evaluation.
-
 ## Capabilities
 
 | Category            | Available questions                                                                                                                                                | Main evidence                                 |
