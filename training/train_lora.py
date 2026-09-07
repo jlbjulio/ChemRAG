@@ -48,7 +48,7 @@ def main() -> None:
 
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
-        dtype=torch.float16,
+        dtype=torch.bfloat16,
     )
     model.config.use_cache = False
 
