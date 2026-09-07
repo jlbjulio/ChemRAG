@@ -167,10 +167,12 @@ rather than current facts: selecting requested fields, preserving units and
 method types, handling partial evidence, and refusing unsupported claims. RAG
 supplies the current scientific data.
 
-The adapter uses rank 8, alpha 16, and targets the attention `q_proj` and
-`v_proj` modules. Training is configured for one complete pass over the training
-split, with validation and checkpoint selection at the end of the epoch. The
-saved adapter is loaded at its normal LoRA scale during chatbot inference.
+The adapter uses rank 16 and alpha 32. It targets every attention projection
+(`q_proj`, `k_proj`, `v_proj`, and `o_proj`) and the feed-forward projections
+(`gate_proj`, `up_proj`, and `down_proj`). Training is configured for one
+complete pass over the training split, with validation and checkpoint selection
+at the end of the epoch. The saved adapter is loaded at its normal LoRA scale
+during chatbot inference.
 
 ## Evaluation
 

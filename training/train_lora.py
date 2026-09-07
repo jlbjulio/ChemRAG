@@ -54,10 +54,18 @@ def main() -> None:
 
     lora_config = LoraConfig(
         task_type="CAUSAL_LM",
-        r=8,
-        lora_alpha=16,
+        r=16,
+        lora_alpha=32,
         lora_dropout=0.05,
-        target_modules=["q_proj", "v_proj"],
+        target_modules=[
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
     )
 
     training_config = SFTConfig(
